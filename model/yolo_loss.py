@@ -232,6 +232,7 @@ class YoloLoss(nn.Module):
         return (lcls+lbox+lobj)*bs
 
     def box_iou(self,p_b,t_b,iou=False,giou=False,diou=False,ciou=False):
+        iou_res=0.
         if iou:
             iou_res=I.iou(p_b,t_b)
         if giou:
@@ -291,13 +292,13 @@ class YoloLoss(nn.Module):
         #    c_id([m]), [m,4 (tx,ty,tw,th)],(b_id([m]),a_id([m]),gy_id([m]),gx_id([m])),anchor([m,2])
         return c,torch.cat((gxy-gij,gwh),1),(b,a,gj.clamp(0,gain[3]-1),gi.clamp(0,gain[2]-1)),anchors[a]
 
+    # 这是个动态的过程，不断训练的pbox会因gtbox的调整而不断优化
     def ebrv2(self,pdwh,gtwh,outline=1.0):
         # [m,2] and [m,2]
         diswh=pdwh-gtwh
         maskl=diswh<0
         # 未指定维度，就是整个[m,2]一起进行求和，取true的个数
         count=maskl.sum()
-        print(diswh[maskl])
         if count>0:
             # 对gt框的宽高大于预测框的宽高的conunt个位置进行处理:加上差值，使gtbox更大
             # 注意gtwh=... 和gtwh[mask]=...的不同，前一个是一个新变量，覆盖了之前的gtwh;后一个是在之前变量的不同位置上新赋值

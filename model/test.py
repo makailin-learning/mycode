@@ -3,10 +3,13 @@ from utils.dataset import *
 from model.yolo_loss import *
 import argparse
 from torch.autograd import Variable
+from utils.utilss import Logger
+
 
 device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-#模型测试代码
+
+# 模型测试代码
 def model_test(opt):
     cfg=parseCfgFile(opt.cfg)
     # b = net_info, c = modules_list
@@ -16,7 +19,14 @@ def model_test(opt):
     return model
 
 
-#损失测试
+# 日志测试代码
+def log_test(opt):
+    model=model_test(opt)
+    log=Logger(opt.logdir)
+    log.creat_model(model,opt.image_size)
+
+
+# 损失测试
 def loss_test(opt):
     model=model_test(opt)
     model=model.to(device)
@@ -33,7 +43,8 @@ def loss_test(opt):
         print('loss=',loss.item())
         #print(yolo_loss.metrics)
 
-#数据集测试代码
+
+# 数据集测试代码
 def data_test(opt,img_show=True):
     data=Mydata(opt.image_path, opt.label_path, opt.txt_path, opt.classes, is_train=opt.is_train, is_aug=opt.is_aug,
                 is_img=opt.is_img, is_grey=opt.is_grey, is_mosaic=opt.is_mosaic, img_size=opt.image_size)
@@ -86,7 +97,7 @@ if __name__ == '__main__':
     data_path = 'F:/VOC/VOC2012/'
     parser = argparse.ArgumentParser()
     parser.add_argument('--cfg', type = str, default = model_path+'cfg_yolov5-0721-s-s-up-v4-pro-eightrep-csp9-all.cfg', help = '配置文件')
-    parser.add_argument('--log', type = str, default = model_path+'yolov4/logs_test/', help = '配置日志地址')
+    parser.add_argument('--logdir', type = str, default = model_path+'yolo_mkl/logs_test/', help = '配置日志地址')
     parser.add_argument('--txt_path', type = str, default = data_path+"ImageSets/Main/", help = '数据集名称地址')
     #parser.add_argument('--val', type = str, default = data_path+"yolov4/val.txt", help = '验证数据集')
     parser.add_argument('--image_size', type=int, default = 416, help='图片尺寸')
@@ -114,6 +125,8 @@ if __name__ == '__main__':
     parser.add_argument('--is_mosaic', action='store_true', default=True, help = '是否随机马赛克')
     parser.add_argument('--is_debug', action='store_true', default=False, help = '是否调试模式')
     opt = parser.parse_args()
+
     #model_test(opt)
     #data_test(opt)
-    loss_test(opt)
+    #loss_test(opt)
+    log_test(opt)
