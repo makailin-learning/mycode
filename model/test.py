@@ -13,16 +13,17 @@ device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def model_test(opt):
     cfg=parseCfgFile(opt.cfg)
     # b = net_info, c = modules_list
-    b,c=creat_module(cfg,3,416)
+    b,c=creat_module(cfg,3,512)
     x=torch.rand([1,3,416,416])
-    model=YOLOV4(b,c)
+    model=YOLOV4(c)
+    print(model)
     return model
 
 
 # 日志测试代码
 def log_test(opt):
     model=model_test(opt)
-    log=Logger(opt.logdir)
+    log=Logger(opt.log)
     log.creat_model(model,opt.image_size)
 
 
@@ -31,7 +32,7 @@ def loss_test(opt):
     model=model_test(opt)
     model=model.to(device)
     dataloader=data_test(opt,img_show=False)
-    yolo_loss=YoloLoss(opt.class_multiplier,opt.image_size,gr=0)
+    yolo_loss=YoloLoss(opt.class_scale,opt.image_size,gr=0,is_ebr=opt.is_ebr,is_fl=opt.is_fl)
 
     for i,data in enumerate(dataloader):
         img,label=data
@@ -61,6 +62,7 @@ def data_test(opt,img_show=True):
     if img_show:
         # for循环代码等价于: iters=iter(DataLoader)   data=next(iters)
         for i, data in enumerate(data_loader):
+
             imgi, label = data  # img是包含batch_size的维度，还需要继续剥离
             imgi = imgi.squeeze(0)
             imgi = imgi.permute(1, 2, 0)  # 调整通道顺序
@@ -97,7 +99,7 @@ if __name__ == '__main__':
     data_path = 'F:/VOC/VOC2012/'
     parser = argparse.ArgumentParser()
     parser.add_argument('--cfg', type = str, default = model_path+'cfg_yolov5-0721-s-s-up-v4-pro-eightrep-csp9-all.cfg', help = '配置文件')
-    parser.add_argument('--logdir', type = str, default = model_path+'yolo_mkl/logs_test/', help = '配置日志地址')
+    parser.add_argument('--log', type = str, default = model_path+'yolo_mkl/logs_test/', help = '配置日志地址')
     parser.add_argument('--txt_path', type = str, default = data_path+"ImageSets/Main/", help = '数据集名称地址')
     #parser.add_argument('--val', type = str, default = data_path+"yolov4/val.txt", help = '验证数据集')
     parser.add_argument('--image_size', type=int, default = 416, help='图片尺寸')
@@ -109,7 +111,7 @@ if __name__ == '__main__':
     #parser.add_argument('--steps', type = str, default = '40000,45000', help = '改变学习率步数')  余弦退火就不用
     #parser.add_argument('--is_max_batches', action='store_true', default=False, help = '是否启用配置中最大迭代次数，会覆盖epoch')
     parser.add_argument('--is_grey', action='store_true', default=False, help = '是否是灰度图')
-    parser.add_argument('--class_multiplier', type = str, default = '10.6787234,12.24146341,8.47804054,9.87992126,6.70093458,15.83280757,4.21410579,8.24137931,3.44474949,14.13802817,13.45576408,6.53515625,13.31299735,13.384,1.,9.01077199,9.86051081,12.57894737,15.34862385,12.18203883', help = '分类乘数')
+    parser.add_argument('--class_scale', type = str, default = '10.6787234,12.24146341,8.47804054,9.87992126,6.70093458,15.83280757,4.21410579,8.24137931,3.44474949,14.13802817,13.45576408,6.53515625,13.31299735,13.384,1.,9.01077199,9.86051081,12.57894737,15.34862385,12.18203883', help = '分类乘数')
     parser.add_argument('--classes', type = str, default = 'aeroplane,bicycle,bird,boat,bottle,bus,car,cat,chair,cow,diningtable,dog,horse,motorbike,person,pottedplant,sheep,sofa,train,tvmonitor', help = '分类标签')
     parser.add_argument('--evaluation_interval', type = int, default = 10, help = '交叉验证频率')
     parser.add_argument('--iou_thres', type = float, default = .5, help = '交叉验证iou阈值')
@@ -122,11 +124,13 @@ if __name__ == '__main__':
     parser.add_argument('--drop_prob', type = float, default = .1, help = '丢弃率')
     parser.add_argument('--block_size', type = int, default = 7, help = '丢弃块大小')
     parser.add_argument('--is_train', action='store_true', default=True, help='是否训练模式')
+    parser.add_argument('--is_ebr', action='store_true', default=True, help='是否ebr训练模型')
+    parser.add_argument('--is_fl', action='store_true', default=True, help='是否focal_loss')
     parser.add_argument('--is_mosaic', action='store_true', default=True, help = '是否随机马赛克')
     parser.add_argument('--is_debug', action='store_true', default=False, help = '是否调试模式')
     opt = parser.parse_args()
 
-    #model_test(opt)
+    model_test(opt)
     #data_test(opt)
     #loss_test(opt)
-    log_test(opt)
+    #log_test(opt)

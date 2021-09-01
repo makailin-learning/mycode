@@ -7,6 +7,8 @@ import datetime
 from torch.utils.tensorboard import SummaryWriter
 from utils.iou import xywh2xyxy,iou,diou
 from torchvision.ops import nms
+import tqdm
+import time
 
 
 # 转成CPU计算
@@ -165,6 +167,150 @@ class EMA():
         for name,param in self.model.named_parameters():
             if param.requires_grad:
                 assert name in self.backup
-                param.data=self.backup[name]   # 恢复原模型权重
+                param.data=self.backup[name]   # 恢复原模型权重43
         self.backup={}
+
+
+def ap_per_class(tp, conf, pred_cls, target_cls):
+    """ Compute the average precision, given the recall and precision curves.
+    Source: https://github.com/rafaelpadilla/Object-Detection-Metrics.
+    # Arguments
+        tp:    True positives (list).
+        conf:  Objectness value from 0-1 (list).
+        pred_cls: Predicted object classes (list).
+        target_cls: True object classes (list).
+    # Returns
+        The average precision as computed in py-faster-rcnn.
+    """
+
+    # 置信度由大到小排序的索引
+    i = np.argsort(-conf)
+
+    # 真阳、置信度、预测分类按i排序
+    tp, conf, pred_cls = tp[i], conf[i], pred_cls[i]
+
+    # 去掉重复分类，从小到达排序
+    unique_classes = np.unique(target_cls)
+
+    # 平均精度，查准率，召回率
+    ap, p, r = [], [], []
+    for c in tqdm.tqdm(unique_classes, desc="Computing AP"):
+        # 预测分类和分类对上为1
+        i = pred_cls == c
+
+        # ground truth分类 的数量
+        n_gt = (target_cls == c).sum()
+        # 预测分类与当前分类一致的数量
+        n_p = i.sum()
+
+        if n_p == 0 and n_gt == 0:
+            continue
+        elif n_p == 0 or n_gt == 0:
+            ap.append(0)
+            r.append(0)
+            p.append(0)
+        else:
+            # 计算假阳
+            fpc = (1 - tp[i]).cumsum()
+            # 计算真阳
+            tpc = (tp[i]).cumsum()
+
+            # Recall
+            recall_curve = tpc / (n_gt + 1e-16)
+            r.append(recall_curve[-1])
+
+            # Precision
+            precision_curve = tpc / (tpc + fpc)
+            p.append(precision_curve[-1])
+
+            # AP from recall-precision curve
+            ap.append(compute_ap(recall_curve, precision_curve))
+
+    # Compute F1 score (harmonic mean of precision and recall)
+    p, r, ap = np.array(p), np.array(r), np.array(ap)
+    f1 = 2 * p * r / (p + r + 1e-16)
+
+    return p, r, ap, f1, unique_classes.astype("int32")
+
+
+def compute_ap(recall, precision):
+    """ Compute the average precision, given the recall and precision curves.
+    Code originally from https://github.com/rbgirshick/py-faster-rcnn.
+    # Arguments
+        recall:    The recall curve (list).
+        precision: The precision curve (list).
+    # Returns
+        The average precision as computed in py-faster-rcnn.
+    """
+    # correct AP calculation
+    # first append sentinel values at the end
+    mrec = np.concatenate(([0.0], recall, [1.0]))
+    mpre = np.concatenate(([1.0], precision, [0.0]))
+
+    # compute the precision envelope
+    for i in range(mpre.size - 1, 0, -1):
+        mpre[i - 1] = np.maximum(mpre[i - 1], mpre[i])
+
+    # to calculate area under PR curve, look for points
+    # where X axis (recall) changes value
+    i = np.where(mrec[1:] != mrec[:-1])[0]
+
+    # and sum (\Delta recall) * prec
+    ap = np.sum((mrec[i + 1] - mrec[i]) * mpre[i + 1])
+    return ap
+
+
+# 计算指标
+def get_batch_statistics(outputs, targets, iou_threshold):
+    # 批次指标
+    batch_metrics = []
+    for sample_i in range(len(outputs)):
+        if outputs[sample_i] is None:
+            continue
+
+        # 样本输出
+        output = outputs[sample_i]
+        # 预测盒子
+        pred_boxes = output[:, 1:5]
+        # 预测置信度
+        pred_scores = output[:, 5]
+        # 预测分类
+        pred_labels = output[:, -1]
+
+        # 定义真阳，按检出样本数量
+        true_positives = np.zeros(output.shape[0])
+
+        # 筛选出该图片下的标签，再选出分类，盒子坐标标签
+        annotations = targets[targets[:, 0] == sample_i][:, 1:]
+        # 如果标签长度不为0，返回标签的分类
+        target_labels = annotations[:, 0] if len(annotations) else []
+        # 如果标签不为空
+        if len(annotations):
+            # 定义检测盒子
+            detected_boxes = []
+            # 标签盒子
+            target_boxes = annotations[:, 1:]
+
+            # 循环预测盒子和预测分类
+            for pred_i, (pred_box, pred_label) in enumerate(zip(pred_boxes, pred_labels)):
+
+                # 如果检测到的盒子长度与标签相等则跳出
+                if len(detected_boxes) == len(annotations):
+                    break
+
+                # 如果预测分类在标签分类中没有，则跳出
+                if pred_label not in target_labels:
+                    continue
+
+                # 预测盒子与标签盒子计算iou，求最大值
+                ious = iou(pred_box.unsqueeze(0), target_boxes)
+                box_iou, box_index = ious.max(0)
+
+                if box_iou >= iou_threshold and box_index not in detected_boxes:
+                    true_positives[pred_i] = 1
+                    detected_boxes += [box_index]
+        pred_scores, pred_labels = to_cpu(pred_scores), to_cpu(pred_labels)
+        batch_metrics.append([true_positives, pred_scores, pred_labels])
+
+    return batch_metrics
 

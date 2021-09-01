@@ -16,10 +16,14 @@ class Mydata(Dataset):
         self.is_train = is_train         # 读取训练数据集还是测试数据集
         self.is_grey = is_grey           # 是否灰度图
         self.is_aug = is_aug             # 是否图像增强
-        self.is_img = is_img.split(',')  # self.img_aug为字符串数组,记录需要进行图像增强的类型
         self.is_mosaic = is_mosaic       # 是否马赛克增强
         #self.is_mosaic_weight=is_mosaic_weight  #是否使用权重马赛克
         self.img_size = img_size
+
+        if is_img is not None:
+            self.is_img = is_img.split(',')  # self.img_aug为字符串数组,记录需要进行图像增强的类型
+        else:
+            self.is_img = []
 
         if self.is_train:
             with open(txt_path+'train.txt') as f:

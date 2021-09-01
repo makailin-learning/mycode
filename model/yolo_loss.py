@@ -66,7 +66,8 @@ class YoloLoss(nn.Module):
         super(YoloLoss, self).__init__()
         self.cp, self.cn=smooth_BCE(eps=0.2)
         #类别乘数，缓解类别间的样本不平衡
-        self.class_scale=class_scale
+        self.class_scale=class_scale.split(',')
+        self.class_scale=list(map(float,self.class_scale))
         # 初始化gtbox的置信度时，取1.0和iou之间的协调比例 0,0.5,1
         self.gr=gr
         self.sort_obj_iou=False

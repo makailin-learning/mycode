@@ -251,9 +251,8 @@ def creat_module(cfg_blocks, first_channel=3, img_size=416, drop_prob=0.1, block
 
 # 利用模型列表创建模型
 class YOLOV4(nn.Module):
-    def __init__(self, net_info, modules_list):
+    def __init__(self, modules_list):
         super().__init__()
-        self.net_info = net_info
         self.modules_list = modules_list
 
     def forward(self,x):
