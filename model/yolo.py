@@ -14,9 +14,10 @@ class YOLOLayer(nn.Module):
 
     def forward(self, x):  # yolo上一层输出x进行输入，第1个为32x75x52x52，第2个为32x75x26x26，第3个为32x75x13x13
 
-        # 消除网格敏感系数
-        # 同样到得到0.9的结果，通过乘以大于1的因子后，原本的tx可以适当缩小，降低tx的预测难度
-        scale_x_y = float(self.cfg['scale_x_y'])
+        # 消除网格敏感系数,大幅度缩小同样要求达到y=[0,1]区间时的x区间大小
+        # 当gt框落在网格边缘时,预测值能更好地预测,否则就必须是很大的数才能达到要求
+        # scale_x_y = float(self.cfg['scale_x_y'])
+        scale_x_y = float(self.cfg['scale_x_y'])*2   # 网络敏感度变为4*sigmoid-1.5
 
         # 定义御用张量
         float_tensor = torch.cuda.FloatTensor if x.is_cuda else torch.FloatTensor

@@ -116,6 +116,12 @@ def creat_module(cfg_blocks, first_channel=3, img_size=416, drop_prob=0.1, block
             modules = ResRep(output_dims[-1], params, drop_prob, block_size)
             filters = modules.filter
 
+        # resdbb层
+        elif c['name'] == 'resdbb':
+            params = c['params']
+            modules = ResDBB(output_dims[-1], params, drop_prob, block_size)
+            filters = modules.filter
+
         # eightrep层
         elif c['name'] == 'eightrep':
             params = c['params']

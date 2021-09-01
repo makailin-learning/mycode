@@ -3,23 +3,63 @@ from torch import nn, einsum
 import torch.nn.functional as F
 from torch.nn.parameter import Parameter
 import math
+
 import numpy as np
+
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
+from model.model_utils import *
+
 import time
 
-# Mish激活函数
-class Mish(nn.Module):
-    def __init__(self):
-        super().__init__()
 
-    def forward(self, x):
-        x = x * (torch.tanh(F.softplus(x)))
+# 层连接
+class RouteConcat(nn.Module):
+    def __init__(self, layers):
+        super(RouteConcat, self).__init__()
+        # 获得层的相对位置，-1，-2等
+        self.layers = layers
+        # 看是否是多层，如果是多层则需要concat连接，如果是单层直接输出
+        self.multiple = len(layers) > 1  # multiple layers flag
+
+    def forward(self, x, outputs):
+        #如果是多层则需要concat连接，如果是单层直接输出
+        return torch.cat([outputs[i] for i in self.layers], 1) if self.multiple else outputs[self.layers[0]]
+
+
+# 残差层
+class ResShortcut(nn.Module):
+    def __init__(self, layers):
+        super(ResShortcut, self).__init__()
+        # 获得需要相加的层的相对位置，-1，-2，-3等
+        self.layers = layers
+        # 是否有多层，目前不支持多层残差，待改进
+        self.multiple = len(layers) == 1
+
+    def forward(self, x, outputs):
+        assert self.multiple, "不支持多值残差块。"
+
+        #与输出层进行相加，仅支持单层
+        x += outputs[self.layers[0]]
         return x
+
 
 # 丢弃块
 class DropBlock2D(nn.Module):
-
+    """Randomly zeroes 2D spatial blocks of the input tensor.
+    As described in the paper
+    `DropBlock: A regularization method for convolutional networks`_ ,
+    dropping whole blocks of feature map allows to remove semantic
+    information as compared to regular dropout.
+    Args:
+        drop_prob (float): probability of an element to be dropped.
+        block_size (int): size of the block to drop
+    Shape:
+        - Input: `(N, C, H, W)`
+        - Output: `(N, C, H, W)`
+    .. _DropBlock: A regularization method for convolutional networks:
+       https://arxiv.org/abs/1810.12890
+    """
     def __init__(self, drop_prob=0.1, block_size=7):
         super(DropBlock2D, self).__init__()
 
@@ -71,6 +111,71 @@ class DropBlock2D(nn.Module):
     def _compute_gamma(self, x):
         return self.drop_prob / (self.block_size**2)
 
+
+class DropBlock3D(DropBlock2D):
+    r"""Randomly zeroes 3D spatial blocks of the input tensor.
+    An extension to the concept described in the paper
+    `DropBlock: A regularization method for convolutional networks`_ ,
+    dropping whole blocks of feature map allows to remove semantic
+    information as compared to regular dropout.
+    Args:
+        drop_prob (float): probability of an element to be dropped.
+        block_size (int): size of the block to drop
+    Shape:
+        - Input: `(N, C, D, H, W)`
+        - Output: `(N, C, D, H, W)`
+    .. _DropBlock: A regularization method for convolutional networks:
+       https://arxiv.org/abs/1810.12890
+    """
+    def __init__(self, drop_prob=0.1, block_size=7):
+        super(DropBlock3D, self).__init__(drop_prob, block_size)
+
+    def forward(self, x):
+        # shape: (bsize, channels, depth, height, width)
+
+        assert x.dim() == 5, \
+            "Expected input with 5 dimensions (bsize, channels, depth, height, width)"
+
+        if not self.training or self.drop_prob == 0.:
+            return x
+        else:
+            # get gamma value
+            gamma = self._compute_gamma(x)
+
+            # sample mask
+            mask = (torch.rand(x.shape[0], *x.shape[2:]) < gamma).float()
+
+            # place mask on input device
+            mask = mask.to(x.device)
+
+            # compute block mask
+            block_mask = self._compute_block_mask(mask)
+
+            # apply block mask
+            out = x * block_mask[:, None, :, :, :]
+
+            # scale output
+            out = out * block_mask.numel() / block_mask.sum()
+
+            return out
+
+    def _compute_block_mask(self, mask):
+        block_mask = F.max_pool3d(input=mask[:, None, :, :, :],
+                                  kernel_size=(self.block_size, self.block_size, self.block_size),
+                                  stride=(1, 1, 1),
+                                  padding=self.block_size // 2)
+
+        if self.block_size % 2 == 0:
+            block_mask = block_mask[:, :, :-1, :-1, :-1]
+
+        block_mask = 1 - block_mask.squeeze(1)
+
+        return block_mask
+
+    def _compute_gamma(self, x):
+        return self.drop_prob / (self.block_size**3)
+
+
 ######### 新版网络结构
 # 卷积层
 # conv params = filters, kernel_size, stride, pad, batch_normalize, activation
@@ -84,6 +189,7 @@ class Conv(nn.Module):
         pad = int(params[3])
         batch_normalize = int(params[4])
         activation = params[5]
+
         self.conv = nn.Identity()
         if is_conv:
             self.conv = nn.Conv2d(in_channels=in_channels,
@@ -149,6 +255,7 @@ class Detect(nn.Module):
             else:
                 print(f"detect time:{time.time() - self.time}")
 
+
 # 残差层
 # conv params = filters, kernel_size, stride, pad, batch_normalize, activation
 class Res(nn.Module):
@@ -175,6 +282,7 @@ class Res(nn.Module):
             else:
                 print(f"res time:{time.time() - self.time}")
 
+
 # spp层
 class Spp(nn.Module):
     def __init__(self, in_channels, params):
@@ -200,16 +308,16 @@ class Spp(nn.Module):
             else:
                 print(f"spp time:{time.time() - self.time}")
 
-# Csp层
+
+# 残差层
 # conv params = filters, kernel_size, stride, pad, batch_normalize, activation
 class Csp(nn.Module):
     def __init__(self, in_channels, convs, block, seq, drop_prob, block_size, super9=0, super_add=0, is_catt=0):
         super(Csp, self).__init__()
         self.super9 = super9
         self.super9flag = False
-        # 一定要注意传入的是str '1' 还是int '1',查看变量类型: type(变量)
-        self.super_add = int(super_add)
-        self.catt = int(is_catt)
+        self.super_add = super_add
+        self.catt = is_catt
 
         convs = convs.split("/")
         if block != "":
@@ -246,9 +354,17 @@ class Csp(nn.Module):
                     for i in range(int(s_2[1])):
                         self.res.append(ResRep(filter, block[1], drop_prob, block_size))
                         filter = self.res[-1].filter
+                elif block[0] == "resdbb":
+                    for i in range(int(s_2[1])):
+                        self.res.append(ResDBB(filter, block[1], drop_prob, block_size))
+                        filter = self.res[-1].filter
                 elif block[0] == "eightrep":
                     for i in range(int(s_2[1])):
                         self.res.append(EightRep(filter, block[1], drop_prob, block_size))
+                        filter = self.res[-1].filter
+                elif block[0] == "eightdbb":
+                    for i in range(int(s_2[1])):
+                        self.res.append(EightDBB(filter, block[1], drop_prob, block_size))
                         filter = self.res[-1].filter
                 elif block[0] == "transformer":
                     for i in range(int(s_2[1])):
@@ -283,7 +399,6 @@ class Csp(nn.Module):
         self.ac = Mish()
 
     def forward(self, x):
-
         if self.super_add:
             c0=x.clone()
 
@@ -297,9 +412,7 @@ class Csp(nn.Module):
             name = module.__class__.__name__
             if name == 'Cat':
                 x = module(x, {"0": c1})
-
                 if self.super_add:
-
                     x+=c0
             else:
                 x = module(x)
@@ -318,6 +431,7 @@ class Csp(nn.Module):
                 self.time = time.time()
             else:
                 print(f"csp time:{time.time() - self.time}")
+
 
 # 输出层
 class Out(nn.Module):
@@ -348,6 +462,7 @@ class Out(nn.Module):
                 self.time = time.time()
             else:
                 print(f"out time:{time.time() - self.time}")
+
 
 # 连接层
 class Cat(nn.Module):
@@ -382,6 +497,7 @@ class Cat(nn.Module):
             else:
                 print(f"cat time:{time.time() - self.time}")
 
+
 # 直通层
 class Get(nn.Module):
     def __init__(self, in_channels, out_dims, froms):
@@ -400,6 +516,7 @@ class Get(nn.Module):
             else:
                 print(f"get time:{time.time() - self.time}")
 
+
 # Focus 层
 class Focus(nn.Module):
     def __init__(self, in_channels, params):  # ch_in, ch_out, kernel, stride, padding, groups
@@ -410,7 +527,6 @@ class Focus(nn.Module):
         self.filter = self.conv.filter
 
     def forward(self, x):  # x(b,c,w,h) -> y(b,4c,w/2,h/2)
-
         return self.conv(torch.cat([x[..., ::2, ::2], x[..., 1::2, ::2], x[..., ::2, 1::2], x[..., 1::2, 1::2]], 1))
         # return self.conv(self.contract(x))
 
@@ -420,6 +536,7 @@ class Focus(nn.Module):
                 self.time = time.time()
             else:
                 print(f"focus time:{time.time() - self.time}")
+
 
 def fuse_conv_and_bn(conv, bn):
     # Fuse convolution and batchnorm layers https://tehnokv.com/posts/fusing-batchnorm-and-conv/
@@ -442,6 +559,7 @@ def fuse_conv_and_bn(conv, bn):
     fusedconv.bias.copy_(torch.mm(w_bn, b_conv.reshape(-1, 1)).reshape(-1) + b_bn)
 
     return fusedconv
+
 
 # repvgg层
 # conv params = filters, kernel_size, stride, pad, batch_normalize, activation
@@ -529,6 +647,7 @@ class Rep(nn.Module):
             else:
                 print(f"res time:{time.time() - self.time}")
 
+
 # transformer 层
 class FeedForward(nn.Module):
     def __init__(self, dim, hidden_dim, dropout=0.):
@@ -543,6 +662,7 @@ class FeedForward(nn.Module):
 
     def forward(self, x):
         return self.net(x)
+
 
 class Attention(nn.Module):
     def __init__(self, dim, heads=8, dim_head=64, dropout=0.):
@@ -589,6 +709,7 @@ class Attention(nn.Module):
         out = rearrange(out, 'b h n d -> b n (h d)')
         return self.to_out(out)
 
+
 class Transformer(nn.Module):
     # in_channels, params -> depth, heads, dim_head, mlp_dim, dropout = 0.
     def __init__(self, in_channels, params):
@@ -626,6 +747,7 @@ class Transformer(nn.Module):
             else:
                 print(f"res time:{time.time() - self.time}")
 
+
 # transformer new 层
 class FeedForwardConv(nn.Module):
     def __init__(self, dim, hidden_dim, dropout=0., dropsize=7):
@@ -637,6 +759,7 @@ class FeedForwardConv(nn.Module):
 
     def forward(self, x):
         return self.net(x)
+
 
 class AttentionConv(nn.Module):
     def __init__(self, dim, heads=8, dim_head=64, dropout=0., dropsize=7):
@@ -688,6 +811,7 @@ class AttentionConv(nn.Module):
         out = rearrange(out, 'b h (hs ws) d -> b (h d) hs ws', hs=hs, ws=ws)
         return self.to_out(out)
 
+
 class TransformerConv(nn.Module):
     # in_channels, params -> depth, heads, dim_head, mlp_dim, dropout = 0.
     def __init__(self, in_channels, params):
@@ -732,6 +856,7 @@ class TransformerConv(nn.Module):
                 self.time = time.time()
             else:
                 print(f"res time:{time.time() - self.time}")
+
 
 class TransformerNew(nn.Module):
     # in_channels, params -> depth, heads, dim_head, mlp_dim, dropout = 0.
@@ -793,6 +918,7 @@ class TransformerNew(nn.Module):
             else:
                 print(f"res time:{time.time() - self.time}")
 
+
 # senet 注意力
 class SEBlock(nn.Module):
     def __init__(self, in_channels, params):
@@ -816,6 +942,7 @@ class SEBlock(nn.Module):
         x = x.view(-1, self.filter, 1, 1)
         return inputs * x
 
+
 # repvgg层
 # conv params = filters, kernel_size, stride, pad, batch_normalize, activation
 class ResRep(nn.Module):
@@ -830,6 +957,32 @@ class ResRep(nn.Module):
         for i, p in enumerate(params[1:]):
             self.res.add_module(f"Rep_{i}", Rep(filter, p, drop_prob, block_size))
             filter = self.res[-1].filter
+        self.filter = filter
+
+        self.drop_block = DropBlock2D(drop_prob, block_size)
+
+    def forward(self, x):
+        return self.drop_block(x + self.res(x))
+
+    def compute_time(self, st=True):
+        if not self.training:
+            if st:
+                self.time = time.time()
+            else:
+                print(f"res time:{time.time() - self.time}")
+
+
+class ResDBB(nn.Module):
+    def __init__(self, in_channels, params, drop_prob, block_size):
+        super(ResDBB, self).__init__()
+        params = params.split("/")
+        #self.filter = int(params[0])
+        self.res = nn.Sequential()
+        filter = in_channels
+        self.res.add_module(f"Conv", Conv(filter, params[0]))
+        filter = self.res[-1].filter
+        self.res.add_module("DBB", DBB(filter, params[1], drop_prob, block_size))
+        filter = self.res[-1].filter
         self.filter = filter
 
         self.drop_block = DropBlock2D(drop_prob, block_size)
@@ -933,6 +1086,33 @@ class EightRep(nn.Module):
         for i, p in enumerate(params[1:]):
             self.res.add_module(f"Rep_{i}", Rep(filter, p, drop_prob, block_size))
             filter = self.res[-1].filter
+        self.filter = filter
+        self.ac = Mish()
+
+        self.drop_block = DropBlock2D(drop_prob, block_size)
+
+    def forward(self, x):
+        return self.drop_block(self.ac(x + self.res(x)))
+
+    def compute_time(self, st=True):
+        if not self.training:
+            if st:
+                self.time = time.time()
+            else:
+                print(f"res time:{time.time() - self.time}")
+
+
+class EightDBB(nn.Module):
+    def __init__(self, in_channels, params, drop_prob, block_size):
+        super(EightDBB, self).__init__()
+        params = params.split("/")
+        #self.filter = int(params[0])
+        self.res = nn.Sequential()
+        filter = in_channels
+        self.res.add_module("SingleRep", SingleRep(filter, params[0], drop_prob, block_size))
+        filter = self.res[-1].filter
+        self.res.add_module("DBB", DBB(filter, params[1], drop_prob, block_size))
+        filter = self.res[-1].filter
         self.filter = filter
         self.ac = Mish()
 
@@ -1059,27 +1239,6 @@ class AugFPN(nn.Module):
 
         return high_pool_fusion
 
-
-
-class BasicConv(nn.Module):  # RFB的适配卷积
-
-    def __init__(self, in_planes, out_planes, kernel_size, stride=1, padding=0, dilation=1, groups=1, mish=True,
-                 bn=True, bias=False):
-        super(BasicConv, self).__init__()
-        self.conv = nn.Conv2d(in_planes, out_planes, kernel_size=kernel_size,
-                              stride=stride, padding=padding, dilation=dilation,
-                              groups=groups, bias=bias)
-        self.bn = nn.BatchNorm2d(out_planes, eps=1e-5, momentum=0.01, affine=True) if bn else None
-        self.mish = Mish() if mish else None  # 将relu替换为mish
-
-    def forward(self, x):
-        x = self.conv(x)
-        if self.bn is not None:
-            x = self.bn(x)
-        if self.mish is not None:
-            x = self.mish(x)
-        return x
-
 class RFB(nn.Module):
 
     def __init__(self, in_ch, params, flag, scale=0.1):
@@ -1183,53 +1342,19 @@ class RFB(nn.Module):
 
         return out
 
-class SeparableConvBlock(nn.Module):
-
-    def __init__(self, in_channels, out_channels, norm=True, activation=True):
-        super(SeparableConvBlock, self).__init__()
-
-        # 逐层卷积要求：in_ch=out_ch=group，in和out相同，结果的通道数就维持不变
-        self.depthwise_conv = nn.Conv2d(in_channels, in_channels, kernel_size=3,
-                                        stride=1, padding=1, groups=in_channels, bias=False)
-
-        # 逐点卷积为普通的1*1卷积
-        self.pointwise_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1)
-
-        self.norm = norm  # norm为True那么就是BN操作，BN中的输入channel就是PW卷积的输出channel
-        if self.norm:
-            self.bn = nn.BatchNorm2d(num_features=out_channels, momentum=0.01, eps=1e-3)
-
-        self.activation = activation  # 如果activation为true就是用Mish激活函数
-        if self.activation:
-            self.mish = Mish()
-
-    # 可分离卷积前向传播过程：先进行DW卷积，在进行PW卷积
-    def forward(self, x):
-        x = self.depthwise_conv(x)
-        x = self.pointwise_conv(x)
-
-        if self.norm:
-            x = self.bn(x)
-
-        if self.activation:
-            x = self.mish(x)
-
-        return x
-
-
 class BiFPN(nn.Module):
 
     # params传入3个特征图的通道数
-    def __init__(self, num_channels, params, froms, bfblock, rout,epsilon=1e-4, attention=True, is_cuda=False):
+    def __init__(self, num_channels, params, froms, bfblock, rout, epsilon=1e-4, attention=True, is_cuda=False):
 
         super(BiFPN, self).__init__()
         self.epsilon = epsilon  # 防止分母为0的微小数
         num_channels = int(num_channels)
         params = params.split(',')
         params = [int(a) for a in params]
-        self.bfblock = bfblock.split(',')  #模块循环次数
-        self.rout = rout #输出分支数
         self.froms = froms.split(',')   # 字典的键为字符‘-1’，‘0’，‘1’,不是整形-1，0，1
+        self.bfblock = bfblock
+        self.rout = rout
         self.filter = num_channels
 
         # 融合过后的可分离卷积层，融合前后的通道数不变
@@ -1312,8 +1437,7 @@ class BiFPN(nn.Module):
                 x = self._forward_fast_attention(i,x)
         else:
             for i in range(self.bfblock):
-                x = self._forward(x)
-
+                x = self._forward(i,x)
         if self.rout==1:
             x = x[-1]
 
@@ -1321,8 +1445,7 @@ class BiFPN(nn.Module):
 
     # 注意力融合机制
     def _forward_fast_attention(self, i, x):
-        if i==0:  #说明就是第一次bifpn
-
+        if i==0:
             c2 = x[0][self.froms[0]]
             c3 = x[0][self.froms[1]]
             c4 = x[0][self.froms[2]]
@@ -1386,7 +1509,7 @@ class BiFPN(nn.Module):
     # 普通融合机制
     def _forward(self, i, x):
 
-        if i==0:  #说明就是第一次bifpn
+        if i==0:
             c2 = x[0][self.froms[0]]
             c3 = x[0][self.froms[1]]
             c4 = x[0][self.froms[2]]
@@ -1419,41 +1542,6 @@ class BiFPN(nn.Module):
         p5_out = self.conv_p5(self.mish(c5_in + self.p4top5_downsample(p4_out)))
 
         return p2_out, p3_out, p4_out, p5_out
-
-
-class SCConv(nn.Module):
-    def __init__(self, in_ch, out_ch, pooling_r):
-        super(SCConv, self).__init__()
-
-        # 平均池化下采样->k2卷积->上采样
-        self.k2 = nn.Sequential(
-            nn.AvgPool2d(kernel_size=pooling_r, stride=pooling_r),
-            nn.Conv2d(in_ch, out_ch, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(out_ch),
-        )
-        # k3卷积
-        self.k3 = nn.Sequential(
-            nn.Conv2d(in_ch, out_ch, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(out_ch),
-        )
-        # k4卷积
-        self.k4 = nn.Sequential(
-            nn.Conv2d(in_ch, out_ch, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(out_ch),
-        )
-
-        self.relu = nn.ReLU(inplace=True)
-
-    def forward(self, x):
-        identity = x
-        # 上采样，size为指定采样到具体尺寸，scale为采样到当前尺寸的多少倍
-        out = torch.sigmoid(
-            torch.add(identity, F.interpolate(self.k2(x), identity.size()[2:])))  # sigmoid(identity + k2)
-        out = torch.mul(self.k3(x), out)  # k3 * sigmoid(identity + k2)
-        out = self.k4(out)  # k4
-        out = self.relu(out)
-
-        return out
 
 class SC(nn.Module):
 
@@ -1544,3 +1632,204 @@ class CAtt(nn.Module):
         out = identity * a_w * a_h
 
         return out
+
+
+class DBB(nn.Module):
+    def __init__(self, in_channels, params, drop_prob, block_size, dilation=1, groups=1,inter_ch_1x1_3x3=None, deploy=False, single_init=False):
+        super(DBB, self).__init__()
+        params = params.split(',')
+        out_channels = int(params[0])
+        kernel_size = int(params[1])
+        stride = int(params[2])
+        padding = kernel_size//2
+        activation = params[5]
+        self.deploy = deploy
+
+        self.activation = nn.Identity()
+        # leaky relu激活函数
+        if activation == 'leaky':
+            self.activation = nn.LeakyReLU(0.1, inplace=True)
+
+        # Mish激活函数
+        elif activation == 'mish':
+            self.activation = Mish()
+
+        # 逻辑激活函数
+        elif activation == 'logistic':
+            self.activation = nn.Sigmoid()
+
+        elif activation == 'linear' or activation == 'none':
+            pass
+
+        else:
+            assert False, "未匹配的激活函数" + activation
+
+        self.kernel_size = kernel_size
+        self.out_channels = out_channels
+        self.groups = groups
+        self.filter = out_channels
+
+        # padding和kernel_size均为推理时，融合后的数值 1,3
+        #assert padding == kernel_size // 2, 'kernel_size和padding不匹配'
+
+        # 推理时过一个融合分支reparam
+        if deploy:
+            self.dbb_reparam = nn.Conv2d(in_channels=in_channels, out_channels=out_channels,
+                                         kernel_size=kernel_size, stride=stride, padding=padding,
+                                         dilation=dilation, groups=groups, bias=True)
+        # 训练时过4个并行分支
+        else:
+            # kxk-bn分支
+            self.dbb_origin = conv_bn(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size,
+                                      stride=stride, padding=padding, dilation=dilation, groups=groups)
+
+            # 非分离卷积时：1x1-bn-avg-bn分支，分离逐层卷积时：avg-bn
+            self.dbb_avg = nn.Sequential()
+            if groups < out_channels:
+                self.dbb_avg.add_module('conv', nn.Conv2d(in_channels=in_channels, out_channels=out_channels,
+                                                          kernel_size=1, stride=1, padding=0, groups=groups,
+                                                          bias=False))
+                self.dbb_avg.add_module('bn', BPL(pad_pixels=padding, num_features=out_channels))
+
+                # BPL已经进行了填充，后续的均值池化则不再进行填充
+                self.dbb_avg.add_module('avg', nn.AvgPool2d(kernel_size=kernel_size, stride=stride, padding=0))
+
+                # 1x1-bn分支
+                self.dbb_1x1 = conv_bn(in_channels=in_channels, out_channels=out_channels, kernel_size=1,
+                                       stride=stride, padding=0, groups=groups)
+            else:
+                self.dbb_avg.add_module('avg', nn.AvgPool2d(kernel_size=kernel_size, stride=stride, padding=padding))
+            self.dbb_avg.add_module('avgbn', nn.BatchNorm2d(out_channels))
+
+            if inter_ch_1x1_3x3 is None:
+                inter_ch_1x1_3x3 = in_channels if groups < out_channels else 2 * in_channels
+
+            # 1x1-bn-kxk-bn分支
+            self.dbb_1x1_kxk = nn.Sequential()
+            if inter_ch_1x1_3x3 == in_channels:
+                self.dbb_1x1_kxk.add_module('idconv1', IBC1x1(channels=in_channels, groups=groups))
+            else:
+                self.dbb_1x1_kxk.add_module('conv1', nn.Conv2d(in_channels=in_channels,
+                                                               out_channels=inter_ch_1x1_3x3,
+                                                               kernel_size=1, stride=1, padding=0,
+                                                               groups=groups, bias=False))
+            self.dbb_1x1_kxk.add_module('bn1', BPL(pad_pixels=padding, num_features=inter_ch_1x1_3x3))
+
+            # BPL已经进行了填充，后续的3x3卷积则不再进行填充
+            self.dbb_1x1_kxk.add_module('conv2', nn.Conv2d(in_channels=inter_ch_1x1_3x3, out_channels=out_channels,
+                                                           kernel_size=kernel_size, stride=stride, padding=0,
+                                                           groups=groups, bias=False))
+            self.dbb_1x1_kxk.add_module('bn2', nn.BatchNorm2d(out_channels))
+
+        # 论文中的实验结果均是采用的默认权重值1,改变默认在某些情况下会有好处
+        # origin分支权重设置为1,其余分支权重设置为0
+        if single_init:
+            self.single_init()
+
+        self.Drop=DropBlock2D(drop_prob,block_size)
+
+    def init_gamma(self, gamma_value):
+        # 模型权重初始化，用value填充张量
+        # hasattr函数作用：判断self中是否包含了后面罗列的字符串
+        if hasattr(self, "dbb_origin"):
+            torch.nn.init.constant_(self.dbb_origin.bn.weight, gamma_value)
+        if hasattr(self, "dbb_1x1"):
+            torch.nn.init.constant_(self.dbb_1x1.bn.weight, gamma_value)
+        if hasattr(self, "dbb_avg"):
+            torch.nn.init.constant_(self.dbb_avg.avgbn.weight, gamma_value)
+        if hasattr(self, "dbb_1x1_kxk"):
+            torch.nn.init.constant_(self.dbb_1x1_kxk.bn2.weight, gamma_value)
+
+    def single_init(self):
+        self.init_gamma(0.0)
+        if hasattr(self, "dbb_origin"):
+            torch.nn.init.constant_(self.dbb_origin.bn.weight, 1.0)
+
+    def forward(self, inputs):
+
+        # 推理时，通过参数重定义网络层
+        if hasattr(self, 'dbb_reparam'):
+            return self.Drop(self.activation(self.dbb_reparam(inputs)))
+
+        # 训练时，通过4个并行分支，结果add
+        out = self.dbb_origin(inputs)
+        if hasattr(self, 'dbb_1x1'):
+            out += self.dbb_1x1(inputs)
+        out += self.dbb_avg(inputs)
+        out += self.dbb_1x1_kxk(inputs)
+
+        return self.Drop(self.activation(out))
+
+    def get_equivalent_kernel_bias(self):
+
+        # origin分支的参数等价化,传入卷积层的权重和整个BN网络层
+        k_origin, b_origin = I_fusebn(self.dbb_origin.conv.weight, self.dbb_origin.bn)
+
+        # 若self中包含dbb_1x1网络层
+        if hasattr(self, 'dbb_1x1'):
+            k_1x1, b_1x1 = I_fusebn(self.dbb_1x1.conv.weight, self.dbb_1x1.bn)
+            k_1x1 = VI_multiscale(k_1x1, self.kernel_size)  # 将k_1x1由 1x1转换为3x3
+        else:
+            k_1x1, b_1x1 = 0, 0
+
+        # 1x1-kxk分支
+        if hasattr(self.dbb_1x1_kxk, 'idconv1'):
+            # 获取identity等效的卷积核 CxCx1x1
+            k_1x1_kxk_first = self.dbb_1x1_kxk.idconv1.get_actual_kernel()
+        else:
+            k_1x1_kxk_first = self.dbb_1x1_kxk.conv1.weight
+        # 先融合1x1conv和bn
+        k_1x1_kxk_first, b_1x1_kxk_first = I_fusebn(k_1x1_kxk_first, self.dbb_1x1_kxk.bn1)
+        # 再融合3x3conv和bn
+        k_1x1_kxk_second, b_1x1_kxk_second = I_fusebn(self.dbb_1x1_kxk.conv2.weight, self.dbb_1x1_kxk.bn2)
+        # 1x1和3x3进行合并
+        k_1x1_kxk_merged, b_1x1_kxk_merged = III_1x1_kxk(k_1x1_kxk_first, b_1x1_kxk_first, k_1x1_kxk_second,
+                                                         b_1x1_kxk_second, groups=self.groups)
+
+        # 1x1-avg分支处理
+        k_avg = V_avg(self.out_channels, self.kernel_size, self.groups)
+        # 融合3x3avg和avgbn
+        k_1x1_avg_second, b_1x1_avg_second = I_fusebn(k_avg.to(self.dbb_avg.avgbn.weight.device),
+                                                      self.dbb_avg.avgbn)
+        if hasattr(self.dbb_avg, 'conv'):
+            k_1x1_avg_first, b_1x1_avg_first = I_fusebn(self.dbb_avg.conv.weight, self.dbb_avg.bn)
+            # 1x1和3x3avg进行合并
+            k_1x1_avg_merged, b_1x1_avg_merged = III_1x1_kxk(k_1x1_avg_first, b_1x1_avg_first,
+                                                             k_1x1_avg_second, b_1x1_avg_second,
+                                                             groups=self.groups)
+        else:
+            k_1x1_avg_merged, b_1x1_avg_merged = k_1x1_avg_second, b_1x1_avg_second
+
+        # k = k_origin+k_1x1+k_1x1_kxk_merged+k_1x1_avg_merged
+        # b = b_origin+b_1x1+b_1x1_kxk_merged+b_1x1_avg_merged
+        return II_addbranch((k_origin, k_1x1, k_1x1_kxk_merged, k_1x1_avg_merged),
+                            (b_origin, b_1x1, b_1x1_kxk_merged, b_1x1_avg_merged))
+
+    def switch_to_deploy(self):
+        if hasattr(self, 'dbb_reparam'):
+            return
+        # 训练模式转推理模式时，先进行参数转换，其实就是将其它分支融合为origin的卷积形式 CBA3x3
+        kernel, bias = self.get_equivalent_kernel_bias()
+        self.dbb_reparam = nn.Conv2d(in_channels=self.dbb_origin.conv.in_channels,
+                                     out_channels=self.dbb_origin.conv.out_channels,
+                                     kernel_size=self.dbb_origin.conv.kernel_size,
+                                     stride=self.dbb_origin.conv.stride,
+                                     padding=self.dbb_origin.conv.padding,
+                                     dilation=self.dbb_origin.conv.dilation,
+                                     groups=self.dbb_origin.conv.groups,
+                                     bias=True)
+
+        self.dbb_reparam.weight.data = kernel
+        self.dbb_reparam.bias.data = bias
+        # 去掉原计算图中的反向传播节点，使这些节点的requires_grad=False
+        for para in self.parameters():
+            para.detach_()
+
+        # delattr函数用于删除类中的属性
+        self.__delattr__('dbb_origin')
+        self.__delattr__('dbb_avg')
+        if hasattr(self, 'dbb_1x1'):
+            self.__delattr__('dbb_1x1')
+        self.__delattr__('dbb_1x1_kxk')
+
+
