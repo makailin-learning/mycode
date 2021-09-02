@@ -63,11 +63,12 @@ def train(opt):
     # 训练数据集
     train_dataset = Mydata(opt.image_path, opt.label_path, opt.txt_path, opt.classes,
                            is_train=opt.is_train, is_aug=opt.is_aug,is_img=opt.is_img,
-                           is_grey=opt.is_grey, is_mosaic=opt.is_mosaic, img_size=image_size)
+                           is_grey=opt.is_grey, is_mosaic=opt.is_mosaic,
+                           is_mixup=opt.is_mixup,img_size=image_size)
     train_loader=DataLoader(train_dataset,batch_size=mini_batch,shuffle=True,collate_fn=train_dataset.collate_fn)
 
     val_dataset = Mydata(opt.image_path, opt.label_path, opt.txt_path, opt.classes,
-                           is_train=False,img_size=image_size)
+                           is_train=False, is_mixup=opt.is_mixup, img_size=image_size)
     val_loader = DataLoader(val_dataset, batch_size=mini_batch, shuffle=True, collate_fn=val_dataset.collate_fn)
 
     # 数据长度
@@ -118,7 +119,7 @@ def train(opt):
         optimizer=optim.SGD(net.parameters(),lr=burnin_schedule(1),momentum=momentum,weight_decay=decay)
     templr=burnin_schedule(1)
 
-    yolo_loss=YoloLoss(class_scale=opt.class_scale,gr=0,is_ebr=opt.is_ebr,is_fl=opt.is_fl)
+    yolo_loss=YoloLoss(class_scale=opt.class_scale,gr=0,is_ebr=opt.is_ebr,is_fl=opt.is_fl,is_pa=opt.is_pa)
 
     # 评估参数
     metrics=["grid_size","loss","lbox","lobj","lcls","iou","conf"]
@@ -191,9 +192,6 @@ def train(opt):
                     ema.decay=tempEMADecay
                     ema.update()
 
-                # 记录每次更新下的学习率
-                logger.list_of_scalars_summary([("learning_rate",templr)],step+1)
-
             # 加入到一个epoch的损失里，即该epoch下的每个迭代步的loss值
             mean_loss.append(loss.item())
 
@@ -214,14 +212,17 @@ def train(opt):
             log_str += AsciiTable(metric_table).table  # AsciiTable是最简单的表。它使用+，|和-字符来构建边框
             log_str += f"\nTotal loss {loss}"  # 将loss信息加入到tabel末尾
 
-            tensorboard_log = []
-            for j, yolo in enumerate(yolo_loss.metrics):
-                # items()方法把字典中每对 key和value 组成一个元组，并把这些元组放在列表中返回
-                for name, metric in yolo.items():
-                    if name != "grid_size":
-                        tensorboard_log += [(f"train/{name}_{j + 1}", metric)]  # name为键，metric为值
-            tensorboard_log += [("train/loss", loss)]
-            logger.list_of_scalars_summary(tensorboard_log, step) # 按step存入损失信息
+            if step%200==0:
+                tensorboard_log = []
+                for j, yolo in enumerate(yolo_loss.metrics):
+                    # items()方法把字典中每对 key和value 组成一个元组，并把这些元组放在列表中返回
+                    for name, metric in yolo.items():
+                        if name != "grid_size":
+                            tensorboard_log += [(f"train/{name}_{j + 1}", metric)]  # name为键，metric为值
+                tensorboard_log += [("train/loss", loss)]
+                logger.list_of_scalars_summary(tensorboard_log, step) # 按step存入损失信息
+                # 记录每次更新下的学习率
+                logger.list_of_scalars_summary([("learning_rate", templr)], step + 1)
 
             epoch_batches_left = len(train_loader) - (batch_i + 1)  # 当前迭代epoch中余下多少迭代step
 
@@ -355,15 +356,17 @@ if __name__ == '__main__':
     parser.add_argument('--conf_thres', type=float, default=.25, help='交叉验证置信度阈值')
     parser.add_argument('--nms_thres', type=float, default=.45, help='交叉验证nms阈值')
     parser.add_argument('--is_aug', action='store_true', default=True, help='是否数据增强')
-    parser.add_argument('--is_img', type=str,default='saturation, hue, contrast, brightness, lighting_noise, mirror', help='数据增强类型')
+    parser.add_argument('--is_img', type=str,default='saturation, hue, contrast, mirror', help='数据增强类型')
     parser.add_argument('--batch', type=int, default=6, help='批数量')
     parser.add_argument('--mini_batch', type=int, default=2, help='mini批数量')
     parser.add_argument('--is_train', action='store_true', default=True, help='是否训练模式')
     parser.add_argument('--is_mosaic', action='store_true', default=True, help='是否随机马赛克')
+    parser.add_argument('--is_mixup', action='store_true', default=True, help='是否随机mixup')
     parser.add_argument('--is_multi_scale', action='store_true', default=True, help='是否多尺度训练')
     parser.add_argument('--is_amp', action='store_true', default=False, help='是否混合精度训练')
     parser.add_argument('--is_ema', action='store_true', default=True, help='是否指数滑动平均训练')
     parser.add_argument('--is_ebr', action='store_true', default=True, help='是否ebr训练模型')
+    parser.add_argument('--is_pa', action='store_true', default=False, help='是否正样本扩充')
     parser.add_argument('--is_fl', action='store_true', default=True, help='是否focal_loss')
     parser.add_argument('--is_debug', action='store_true', default=False, help='是否调试模式')
     opt = parser.parse_args()

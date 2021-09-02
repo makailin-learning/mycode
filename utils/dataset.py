@@ -7,7 +7,7 @@ from torchvision.transforms import transforms
 # 读取数据函数
 class Mydata(Dataset):
     def __init__(self, image_path, label_path, txt_path, classes, is_train=True, is_aug=False, is_img=None,
-                 is_grey=False, is_mosaic=False, img_size=416):
+                 is_grey=False, is_mosaic=False, is_mixup=False,img_size=416):
         super().__init__()
         self.image_path = image_path
         self.label_path = label_path
@@ -16,6 +16,7 @@ class Mydata(Dataset):
         self.is_train = is_train         # 读取训练数据集还是测试数据集
         self.is_grey = is_grey           # 是否灰度图
         self.is_aug = is_aug             # 是否图像增强
+        self.is_mixup = is_mixup         # 是否混合图像
         self.is_mosaic = is_mosaic       # 是否马赛克增强
         #self.is_mosaic_weight=is_mosaic_weight  #是否使用权重马赛克
         self.img_size = img_size
@@ -100,6 +101,24 @@ class Mydata(Dataset):
         # 图像增强
         if self.is_aug:
             img, bbox = self.img_aug(img, bbox)
+
+        # 图像混合
+        if self.is_mixup:
+
+            data = [(img, bbox, w, h)]  # 创造一个存放每个图像的相关数据
+            indice = random.choice(self.indices)  # choice只取1次
+            img_temp, bbox_temp, w_temp, h_temp = self.load_img(indice)
+            # 选取的图片进行数据增强
+            #img_temp, bbox_temp = self.img_aug(img_temp, bbox_temp)
+            # 存放到列表中
+            data.append((img_temp, bbox_temp, w_temp, h_temp))
+
+            # 图像混合，2合1
+            img_temp, bbox_temp = self.img_mixup(data)
+            if bbox_temp.shape[0] != 0:  # 判断结果是否有效
+                img, bbox = img_temp, bbox_temp
+            else:
+                raise ValueError('img_mixup fail')
 
         # 马赛克增强
         if self.is_mosaic:
@@ -253,6 +272,39 @@ class Mydata(Dataset):
         bbox[:, 1:] = box
 
         return img, bbox
+
+    #图像混合数据增强函数
+    def img_mixup(self,data):
+        lam=0.5
+        img1,label1,w1,h1=data[0]
+        img2, label2, w2, h2 = data[1]
+
+        n = len(label1)
+        m = len(label2)
+        ratio_w= w1 / w2
+        ratio_h = h1 / h2
+        max_r_w=max(ratio_w,1/ratio_w)
+        max_r_h = max(ratio_h, 1 / ratio_h)
+        max_r=max(max_r_w,max_r_h)
+
+        if n+m<5 and max_r<1.2:
+            h1, w1, c1 = img1.shape
+            h2, w2, c2 = img2.shape
+
+            # label:xmin,ymin,xmax,ymax
+            label2[:, 1] = label2[:, 1] / w2 * w1
+            label2[:, 2] = label2[:, 2] / h2 * h1
+            label2[:, 3] = label2[:, 3] / w2 * w1
+            label2[:, 4] = label2[:, 4] / h2 * h1
+            img2 = cv2.resize(img2, (w1, h1))
+
+            mix_img = (img1 * lam + img2 * (1 - lam)).astype(np.uint8)
+            mix_label = np.vstack((label1, label2))
+        else:
+            mix_img=img1
+            mix_label=label1
+
+        return mix_img, mix_label
 
     #马赛克数据增强函数
     def img_mosaic(self, data):

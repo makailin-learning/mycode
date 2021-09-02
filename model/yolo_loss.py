@@ -63,7 +63,7 @@ class QFocalLoss(nn.Module):
             return loss
 
 class YoloLoss(nn.Module):
-    def __init__(self,class_scale,gr=0,is_ebr=False,is_fl=False):
+    def __init__(self,class_scale,gr=0,is_ebr=False,is_fl=False,is_pa=False):
         super(YoloLoss, self).__init__()
         self.cp, self.cn=smooth_BCE(eps=0.2)
         #类别乘数，缓解类别间的样本不平衡
@@ -72,6 +72,7 @@ class YoloLoss(nn.Module):
         self.class_scale=list(map(float,self.class_scale))
         # 初始化gtbox的置信度时，取1.0和iou之间的协调比例 0,0.5,1
         self.gr=gr
+        self.is_pa=is_pa
         self.sort_obj_iou=False
         #self.image_size=image_size
         #二元交叉熵带softmax的分类损失函数
@@ -278,20 +279,23 @@ class YoloLoss(nn.Module):
             # 选出那些gt和anchor的尺寸比小于四倍的那些gt框，shape[n,7],有可能n=0，即该batch张图片与该检测头匹配不成功
             # 例如图中全是大物体，且都只有一个物体，即nt=4，在52x52的检测头下，就会匹配失败，那么将会在26和13下匹配成功
             t=t[j]
-            gxy=t[:,2:4]    #取得gt框的xy坐标 [n,2]
-            gxi=gain[[2,3]]-gxy  #网格数-xy坐标，获取框在检测图上的方位偏移 [n,2]
-            #gt框x,y坐标距离左边的距离小于中心点，且不是在第一个网格中那些xy坐标
-            j,k=((gxy%1.<g)&(gxy>1.)).T
-            j_s, k_s = ((gxy % 1. < 0.35) & (gxy > 1.)).T
-            # gt框位置距离右边的距离小于中心点，且不是在最后一个网格中  shape均为 [n]
-            l,m=((gxi%1.<g)&(gxi>1.)).T
-            l_s, m_s = ((gxi % 1. < 0.35) & (gxi > 1.)).T
-            o,p=j_s&k_s,k_s&l_s
-            q,s=l_s&m_s,m_s&j_s
-            j=torch.stack((torch.ones_like(j),j,k,l,m,o,p,q,s))  # [9,n]
-            t=t.repeat((9,1,1))[j]  # [n,7]-[9,n,7][9,n]-[m,7]
-            # [None]用于升维 [n,2]-[1,n,2] + [9,2]-[9,1,2] = [9,n,2][9,n] = [m,2]
-            offsets=(torch.zeros_like(gxy)[None]+off[:,None])[j]
+            if self.is_pa:
+                gxy=t[:,2:4]    #取得gt框的xy坐标 [n,2]
+                gxi=gain[[2,3]]-gxy  #网格数-xy坐标，获取框在检测图上的方位偏移 [n,2]
+                #gt框x,y坐标距离左边的距离小于中心点，且不是在第一个网格中那些xy坐标
+                j,k=((gxy%1.<g)&(gxy>1.)).T
+                j_s, k_s = ((gxy % 1. < 0.35) & (gxy > 1.)).T
+                # gt框位置距离右边的距离小于中心点，且不是在最后一个网格中  shape均为 [n]
+                l,m=((gxi%1.<g)&(gxi>1.)).T
+                l_s, m_s = ((gxi % 1. < 0.35) & (gxi > 1.)).T
+                o,p=j_s&k_s,k_s&l_s
+                q,s=l_s&m_s,m_s&j_s
+                j=torch.stack((torch.ones_like(j),j,k,l,m,o,p,q,s))  # [9,n]
+                t=t.repeat((9,1,1))[j]  # [n,7]-[9,n,7][9,n]-[m,7]
+                # [None]用于升维 [n,2]-[1,n,2] + [9,2]-[9,1,2] = [9,n,2][9,n] = [m,2]
+                offsets=(torch.zeros_like(gxy)[None]+off[:,None])[j]
+            else:
+                offsets=0
         else:
             t=y[0]
             offsets=0

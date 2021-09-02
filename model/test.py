@@ -47,8 +47,9 @@ def loss_test(opt):
 
 # 数据集测试代码
 def data_test(opt,img_show=True):
-    data=Mydata(opt.image_path, opt.label_path, opt.txt_path, opt.classes, is_train=opt.is_train, is_aug=opt.is_aug,
-                is_img=opt.is_img, is_grey=opt.is_grey, is_mosaic=opt.is_mosaic, img_size=opt.image_size)
+    data=Mydata(opt.image_path, opt.label_path, opt.txt_path, opt.classes, is_train=opt.is_train,
+                is_aug=opt.is_aug,is_img=opt.is_img, is_grey=opt.is_grey, is_mosaic=opt.is_mosaic,
+                is_mixup=opt.is_mixup, img_size=opt.image_size)
     """
     数据加载由数据集和采样器组成
     DataLoader是PyTorch中数据读取的一个重要接口,将自定义的Dataset根据batch size大小、
@@ -121,8 +122,8 @@ if __name__ == '__main__':
     parser.add_argument('--conf_thres', type=float, default=.25, help='交叉验证置信度阈值')
     parser.add_argument('--nms_thres', type=float, default=.45, help='交叉验证nms阈值')
     parser.add_argument('--is_aug', action='store_true', default=True, help='是否数据增强')
-    parser.add_argument('--is_img', type=str, default='saturation, hue, contrast, brightness, lighting_noise, mirror',help='数据增强类型')
-    parser.add_argument('--batch', type=int, default=6, help='批数量')
+    parser.add_argument('--is_img', type=str, default='saturation, hue, contrast, mirror',help='数据增强类型')
+    parser.add_argument('--batch', type=int, default=1, help='批数量')
     parser.add_argument('--mini_batch', type=int, default=2, help='mini批数量')
     parser.add_argument('--is_train', action='store_true', default=True, help='是否训练模式')
     parser.add_argument('--is_mosaic', action='store_true', default=True, help='是否随机马赛克')
@@ -130,11 +131,12 @@ if __name__ == '__main__':
     parser.add_argument('--is_amp', action='store_true', default=False, help='是否混合精度训练')
     parser.add_argument('--is_ema', action='store_true', default=True, help='是否指数滑动平均训练')
     parser.add_argument('--is_ebr', action='store_true', default=True, help='是否ebr训练模型')
+    parser.add_argument('--is_mixup', action='store_true', default=True, help='是否图像混合')
     parser.add_argument('--is_fl', action='store_true', default=True, help='是否focal_loss')
     parser.add_argument('--is_debug', action='store_true', default=False, help='是否调试模式')
     opt = parser.parse_args()
 
-    model_test(opt)
-    #data_test(opt)
+    #model_test(opt)
+    data_test(opt)
     #loss_test(opt)
     #log_test(opt)
