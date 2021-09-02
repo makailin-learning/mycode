@@ -314,10 +314,10 @@ class Spp(nn.Module):
 class Csp(nn.Module):
     def __init__(self, in_channels, convs, block, seq, drop_prob, block_size, super9=0, super_add=0, is_catt=0):
         super(Csp, self).__init__()
-        self.super9 = super9
+        self.super9 = int(super9)
         self.super9flag = False
-        self.super_add = super_add
-        self.catt = is_catt
+        self.super_add = int(super_add)
+        self.catt = int(is_catt)
 
         convs = convs.split("/")
         if block != "":

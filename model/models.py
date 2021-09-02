@@ -54,7 +54,7 @@ def parseCfgFile(cfgfile):
     return blocks  # [{’name‘:'net',...},{'name':'conv',....}....]  字典列表,一个字典内包含该结构层的所有信息
 
 # 模型结构解析函数，解析为模型列表
-def creat_module(cfg_blocks, first_channel=3, img_size=416, drop_prob=0.1, block_size=7):  # 利用配置文件列表，创建模型
+def creat_module(cfg_blocks, first_channel=3, drop_prob=0.1, block_size=7):  # 利用配置文件列表，创建模型
     net_info = cfg_blocks[0]  # 第一个字典元素为{net}模块，不算做模型结构，作为网络信息
     """
     #它是一个储存不同 module，并自动将每个 module 的 parameters 添加到网络之中的容器
@@ -244,7 +244,7 @@ def creat_module(cfg_blocks, first_channel=3, img_size=416, drop_prob=0.1, block
             # 转换为2维矩阵形式，才能使用mask取
             anchors = np.array([[anchors[i], anchors[i + 1]] for i in range(0, len(anchors), 2)])
             classes = c['classes'] #这里的classes是类别个数，不是具体类型
-            modules = YOLOLayer(anchors[mask],classes,img_size,c)  #将yolo网络层整个字典信息传入
+            modules = YOLOLayer(anchors[mask],classes,c)  #将yolo网络层整个字典信息传入
 
         else:
             assert False, "出错：未加入结构" + x['type']  # assert根据计算的表达式结果，进行报错与不报错，这里强制设置为False,所以一定会报错
@@ -262,6 +262,7 @@ class YOLOV4(nn.Module):
         self.modules_list = modules_list
 
     def forward(self,x):
+        img_size=x.shape[2]
         yolo_out, yolo_cfg, out = [], [], {}
         for i,module in enumerate(self.modules_list):
             # 获得模型结构层名称
@@ -284,7 +285,7 @@ class YOLOV4(nn.Module):
             # 如果是yolo层，把最后输出加到yolo_out列表中
             elif name == 'YOLOLayer':
 
-                x = module(x)
+                x = module(x,img_size)   # 多尺度训练下的图像尺寸，并非固定的416
                 yolo_out.append(x)  #[64x..x25,64x...x25,64x....x25]
                 yolo_cfg.append(module.cfg)  # 把3个yololayer对应的字典信息收集起来
             else:
@@ -292,5 +293,5 @@ class YOLOV4(nn.Module):
 
         self.cfg = yolo_cfg   # [yolocfg0,yolocfg1,yolocfg2]
 
-        return yolo_out       # [yoloout0,yoloout1,yoloout2]
+        return yolo_out       # [yoloout_b,yoloout_m,yoloout2_s]
 

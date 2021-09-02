@@ -4,15 +4,15 @@ import numpy as np
 
 # 将detect层输出的Bx75xHxW的张量进行处理，再返回
 class YOLOLayer(nn.Module):
-    def __init__(self, anchors, classes, img_size, cfg):
+    def __init__(self, anchors, classes, cfg):
         super().__init__()  # 别忘了写super，因为要继承父类的一些默认函数
         self.anchors = anchors  # 一个二维数组：[[142, 110], [192, 243], [459, 401]]
         self.num_cls = int(classes)
-        self.img_size = img_size
+        #self.img_size = img_size
         self.num_anchor = len(anchors)
         self.cfg = cfg
 
-    def forward(self, x):  # yolo上一层输出x进行输入，第1个为32x75x52x52，第2个为32x75x26x26，第3个为32x75x13x13
+    def forward(self, x, img_size):  # yolo上一层输出x进行输入，第1个为32x75x52x52，第2个为32x75x26x26，第3个为32x75x13x13
 
         # 消除网格敏感系数,大幅度缩小同样要求达到y=[0,1]区间时的x区间大小
         # 当gt框落在网格边缘时,预测值能更好地预测,否则就必须是很大的数才能达到要求
@@ -25,7 +25,8 @@ class YOLOLayer(nn.Module):
         batch_size = x.size(0)
         grid_size = x.size(2)
         self.cfg['grid_size'] = grid_size  # 反向添加网格信息，传参进来的字典内容会被修改，原字典内容也会一并改变
-        self.stride = self.img_size // grid_size  # 416//13=32
+        # 这里的img_size不再固定是416了，而是多尺度训练下的随机尺寸
+        self.stride = img_size // grid_size  # 416//13=32
         """
         锚框缩放到特征图大小,从 [(142, 110), (192, 243), (459, 401)] :
         [[ 4.4375,  3.4375],

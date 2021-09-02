@@ -32,7 +32,7 @@ def train(opt):
     cfgs=parseCfgFile(cfg_file)
     image_size = int(cfgs[0]['width'])
     channels = int(cfgs[0]['channels'])
-    net_info, modules_list = creat_module(cfgs, channels, image_size, opt.drop_prob, opt.block_size)
+    net_info, modules_list = creat_module(cfgs, channels, opt.drop_prob, opt.block_size)
 
     #读取net部分配置信息
     momentum = float(net_info['momentum'])
@@ -63,11 +63,11 @@ def train(opt):
     # 训练数据集
     train_dataset = Mydata(opt.image_path, opt.label_path, opt.txt_path, opt.classes,
                            is_train=opt.is_train, is_aug=opt.is_aug,is_img=opt.is_img,
-                           is_grey=opt.is_grey, is_mosaic=opt.is_mosaic, img_size=opt.image_size)
+                           is_grey=opt.is_grey, is_mosaic=opt.is_mosaic, img_size=image_size)
     train_loader=DataLoader(train_dataset,batch_size=mini_batch,shuffle=True,collate_fn=train_dataset.collate_fn)
 
     val_dataset = Mydata(opt.image_path, opt.label_path, opt.txt_path, opt.classes,
-                           is_train=False,img_size=opt.image_size)
+                           is_train=False,img_size=image_size)
     val_loader = DataLoader(val_dataset, batch_size=mini_batch, shuffle=True, collate_fn=val_dataset.collate_fn)
 
     # 数据长度
@@ -118,8 +118,7 @@ def train(opt):
         optimizer=optim.SGD(net.parameters(),lr=burnin_schedule(1),momentum=momentum,weight_decay=decay)
     templr=burnin_schedule(1)
 
-    yolo_loss=YoloLoss(class_scale=opt.class_scale,image_size=opt.image_size,gr=0,
-                       is_ebr=opt.is_ebr,is_fl=opt.is_fl)
+    yolo_loss=YoloLoss(class_scale=opt.class_scale,gr=0,is_ebr=opt.is_ebr,is_fl=opt.is_fl)
 
     # 评估参数
     metrics=["grid_size","loss","lbox","lobj","lcls","iou","conf"]
@@ -161,6 +160,7 @@ def train(opt):
                     loss=yolo_loss(x=outputs,y=targets,c=net.cfg)
                 scaler.scale(loss).backward()
             else:
+                # outputs的尺寸一直跟随这多尺度训练在变化，而不是一直的52，26，13
                 outputs=net(imgs)
                 loss = yolo_loss(x=outputs, y=targets, c=net.cfg)
                 # 每一步会计算损失，然后反向传播计算梯度，存放到对应变量里的梯度参数grad中，累计4步后再进行梯度参数更新，然后归零
@@ -335,10 +335,9 @@ if __name__ == '__main__':
     class_scale = '10.6787234,12.24146341,8.47804054,9.87992126,6.70093458,15.83280757,4.21410579,8.24137931,3.44474949,14.13802817,13.45576408,6.53515625,13.31299735,13.384,1.,9.01077199,9.86051081,12.57894737,15.34862385,12.18203883'
     label_class = 'aeroplane,bicycle,bird,boat,bottle,bus,car,cat,chair,cow,diningtable,dog,horse,motorbike,person,pottedplant,sheep,sofa,train,tvmonitor'
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default=model_path + 'cfg_yolov5-0721-s-s-up-v4-pro-eightrep-csp9-all.cfg', help='配置文件')
+    parser.add_argument('--cfg', type=str, default=model_path + 'cfg_yolov5_210901_mkl_dbb.cfg', help='配置文件')
     parser.add_argument('--log', type=str, default=model_path + 'yolo_mkl/logs_test/', help='配置日志地址')
     parser.add_argument('--txt_path', type=str, default=data_path + "ImageSets/Main/", help='数据集地址')
-    parser.add_argument('--image_size', type=int, default=416, help='图片尺寸')
     parser.add_argument('--image_path', type=str, default=data_path + 'JPEGImages/', help='图片地址')
     parser.add_argument('--label_path', type=str, default=data_path + 'Annotations/', help='标签地址')
     parser.add_argument('--checkpoint', type=str, default=model_path + 'checkpoints20210831/', help='存档地址')
