@@ -160,8 +160,9 @@ class YoloLoss(nn.Module):
             b,a,gj,gi=indices  # gj和gi是gt框在检测图中的网格位置，检测图下的网格偏移量
 
             # 定义置信度，shape与预测tensor一样,(input,full_value: 0.1) 64x3x13x13
-            pconf = x_i[..., 0].sigmoid()
-            tobj=torch.full_like(pconf,self.cn,device=device)
+            pconf = x_i[..., 0]   # 损失函数里面已经包含了sigmoid，所以不再处理
+            #tobj=torch.full_like(pconf,self.cn,device=device)
+            tobj = torch.zeros_like(pconf, device=device)
 
             # 选取候选框数量 m，这么写比len(b)的鲁棒性更高
             n=b.shape[0]
@@ -179,7 +180,7 @@ class YoloLoss(nn.Module):
                 # 预测box的信息shape[m,4]
                 pbox=torch.cat((pxy,pwh),1)
                 # 预测分类信息  [m,20]
-                pcls=ps[:,5:].sigmoid()
+                pcls=ps[:,5:]   # 损失函数里面已经包含了sigmoid，所以不再处理
 
                 #计算loss
                 if self.is_ebr:
@@ -202,12 +203,15 @@ class YoloLoss(nn.Module):
                     b,a,gj,gi,score_iou=b[sort_id],a[sort_id],gj[sort_id],gi[sort_id],score_iou[sort_id]
 
                 # gt=0时，初始化为1，静态的; gt=1时，初始化为iou，动态的，随着iou越好，gtbox的conf也越好
-                tobj[b,a,gj,gi]=(self.cp-self.gr)+self.gr*score_iou
+                #tobj[b,a,gj,gi]=(self.cp-self.gr)+self.gr*score_iou
+                tobj[b,a,gj,gi]=(1.0-self.gr)+self.gr*score_iou
 
                 if nc>1:
-                    t=torch.full_like(pcls,self.cn,device=device)  # [m,20]
+                    #t=torch.full_like(pcls,self.cn,device=device)  # [m,20]
+                    t = torch.zeros_like(pcls, device=device)
                     # range(m个box),即逐行中的指定列进行赋值为0.9，其余19列值保持为0.1
-                    t[range(n),tcls]=self.cp
+                    #t[range(n),tcls]=self.cp
+                    t[range(n), tcls] = 1.0
                     #分类是针对box的，所以shape mx5
                     lcls+=self.BCEcls(pcls,t,self.cp)   #未乘以分类乘数
 
@@ -223,7 +227,7 @@ class YoloLoss(nn.Module):
                 "lcls": to_cpu(lcls).item(),
                 "lobj": to_cpu(lobj).item(),
                 "iou":to_cpu(iou.mean()).item(),
-                "conf":to_cpu(pconf.mean()).item()
+                "conf":to_cpu((torch.sigmoid(pconf)).mean()).item()
             }
             self.metrics.append(metric)
 

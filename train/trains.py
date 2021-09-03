@@ -293,9 +293,12 @@ def train(opt):
             for batch_j, (imgs,targets) in enumerate(tqdm.tqdm(val_loader, desc="Detecting objects")):
                 if targets is None:
                     continue
-                # tolist()，将ndarray或tensor的n维向量，转换为列表
+                # tolist()，将ndarray或tensor的n维向量，转换为列表  b_id,cls_id,x,y,w,h
+                # 将分类号提取出来，存放到列表中[2,4,5,1,0,3...]
                 labels+=targets[:,1].tolist()
+                # box坐标还原到原图尺寸 x,y,w,h
                 targets[:, 2:] *= image_size
+                # x,y,w,h -> x,y,x,y
                 targets[:, 2:] = xywh2xyxy(targets[:, 2:])
 
                 # pytorch除了训练都需要去梯度
@@ -304,7 +307,10 @@ def train(opt):
                     targets=targets.to(device)
                     if opt.is_amp:
                         imgs=imgs.half()
+
+                    # output: batch, 507, 25(conf, x, y, x, y, cls0 - 20)
                     outputs = net(imgs)
+                    # 过NMS得到最后合格的那些预测box  output为list: [[n,7],[n,7],[n,7]...]   len(output)=64
                     outputs = NMS(outputs,conf_thres=opt.conf_thres,nms_thres=opt.nms_thres)
                 # 计算指标
                 sample_metrics += get_batch_statistics(outputs, targets, iou_threshold=opt.iou_thres)

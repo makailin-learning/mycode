@@ -264,16 +264,16 @@ def compute_ap(recall, precision):
 def get_batch_statistics(outputs, targets, iou_threshold):
     # 批次指标
     batch_metrics = []
-    for sample_i in range(len(outputs)):
+    for sample_i in range(len(outputs)):  # 遍历batch个预测结果batch x [n,7]  conf,x,y,x,y,conf_cls_socre,cls_id
         if outputs[sample_i] is None:
             continue
 
-        # 样本输出
+        # 样本输出  output为list: [[n,7],[n,7],[n,7]...]  len(output)=64
         output = outputs[sample_i]
         # 预测盒子
         pred_boxes = output[:, 1:5]
         # 预测置信度
-        pred_scores = output[:, 5]
+        pred_scores = output[:, 0]
         # 预测分类
         pred_labels = output[:, -1]
 
