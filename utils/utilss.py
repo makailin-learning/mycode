@@ -273,7 +273,7 @@ def get_batch_statistics(outputs, targets, iou_threshold):
         # 预测盒子
         pred_boxes = output[:, 1:5]
         # 预测置信度
-        pred_scores = output[:, 0]
+        pred_scores = output[:, 5]
         # 预测分类
         pred_labels = output[:, -1]
 

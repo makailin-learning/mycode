@@ -75,7 +75,7 @@ class YoloLoss(nn.Module):
         self.is_pa=is_pa
         self.sort_obj_iou=False
         #self.image_size=image_size
-        #二元交叉熵带softmax的分类损失函数
+        #二元交叉熵带sigmoid的分类损失函数,这里的sigmoid只对pred使用,让其归于0-1之间,label本身设置时就是0-1之间
         self.BCEcls=nn.BCEWithLogitsLoss()
         self.BCEobj=nn.BCEWithLogitsLoss()
         self.BCEbox=nn.BCEWithLogitsLoss()
