@@ -60,10 +60,10 @@ def data_test(opt,img_show=True):
     索引产生后用__getitem__取得对应索引的img和label，再交给collate_fn函数进行打包处理，生成batch_size形状的张量
     """
     data_loader=DataLoader(data,batch_size=opt.batch,shuffle=True,collate_fn=data.collate_fn)
+    data_loader.dataset.mosaic_close()
     if img_show:
         # for循环代码等价于: iters=iter(DataLoader)   data=next(iters)
         for i, data in enumerate(data_loader):
-
             imgi, label = data  # img是包含batch_size的维度，还需要继续剥离
             imgi = imgi.squeeze(0)
             imgi = imgi.permute(1, 2, 0)  # 调整通道顺序

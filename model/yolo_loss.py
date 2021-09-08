@@ -207,11 +207,11 @@ class YoloLoss(nn.Module):
                 tobj[b,a,gj,gi]=(1.0-self.gr)+self.gr*score_iou
 
                 if nc>1:
-                    #t=torch.full_like(pcls,self.cn,device=device)  # [m,20]
-                    t = torch.zeros_like(pcls, device=device)
+                    t=torch.full_like(pcls,self.cn,device=device)  # [m,20]
+                    #t = torch.zeros_like(pcls, device=device)
                     # range(m个box),即逐行中的指定列进行赋值为0.9，其余19列值保持为0.1
-                    #t[range(n),tcls]=self.cp
-                    t[range(n), tcls] = 1.0
+                    t[range(n),tcls]=self.cp
+                    #t[range(n), tcls] = 1.0
                     #分类是针对box的，所以shape mx5
                     lcls+=self.BCEcls(pcls,t,self.cp)   #未乘以分类乘数
 
@@ -312,7 +312,7 @@ class YoloLoss(nn.Module):
         a=t[:,6].long() # anchor_id
         # 返回的均是m维向量或者，mxn的矩阵，m为原先n个gt框经过筛选后的
         #    c_id([m]), [m,4 (tx,ty,tw,th)],(b_id([m]),a_id([m]),gy_id([m]),gx_id([m])),anchor([m,2])
-        return c,torch.cat((gxy-gij,gwh),1),(b,a,gj.clamp(0,gain[3]-1),gi.clamp(0,gain[2]-1)),anchors[a]
+        return c,torch.cat((gxy-gij,gwh),1),(b,a,gj.clamp_(0,gain[3]-1),gi.clamp_(0,gain[2]-1)),anchors[a]
 
     # 这是个动态的过程，不断训练的pbox会因gtbox的调整而不断优化
     def ebrv2(self,pdwh,gtwh,outline=1.0):

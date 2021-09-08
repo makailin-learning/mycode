@@ -93,6 +93,10 @@ class Mydata(Dataset):
 
         return img, bbox, w, h
 
+    def mosaic_close(self):
+        self.is_mosaic=False
+        self.is_mixup=False
+
     #按索引读取数据集函数
     def __getitem__(self, index):
 

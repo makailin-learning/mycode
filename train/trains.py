@@ -134,6 +134,10 @@ def train(opt):
         pbar_end=''
         mean_loss=[]
 
+        # 最后15个epoch，关闭mixup和马赛克数据增强
+        if epoch+1 == opt.mosaic_epoch and opt.mosaic_epoch < epochs:
+            train_loader.dataset.mosaic_close()
+
         # 按批次循环 每次取出1组mini_batch的数据,作为一个batch_i
         # 当取得batch_update组mini_batch数据时,进行梯度传播,参数更新
         for batch_i, (imgs,targets) in enumerate(train_loader):
@@ -365,7 +369,7 @@ if __name__ == '__main__':
     parser.add_argument('--is_img', type=str,default='saturation, hue, contrast, mirror', help='数据增强类型')
     parser.add_argument('--batch', type=int, default=6, help='批数量')
     parser.add_argument('--mini_batch', type=int, default=2, help='mini批数量')
-    parser.add_argument('--is_train', action='store_true', default=False, help='是否训练模式')
+    parser.add_argument('--is_train', action='store_true', default=True, help='是否训练模式')
     parser.add_argument('--is_mosaic', action='store_true', default=True, help='是否随机马赛克')
     parser.add_argument('--is_mixup', action='store_true', default=True, help='是否随机mixup')
     parser.add_argument('--is_multi_scale', action='store_true', default=True, help='是否多尺度训练')
@@ -373,6 +377,7 @@ if __name__ == '__main__':
     parser.add_argument('--is_ema', action='store_true', default=True, help='是否指数滑动平均训练')
     parser.add_argument('--is_ebr', action='store_true', default=False, help='是否ebr训练模型')
     parser.add_argument('--is_pa', action='store_true', default=False, help='是否正样本扩充')
+    parser.add_argument('--mosaic_epoch', type=int, default=375, help='关闭数据增强的epoch数')
     parser.add_argument('--is_fl', action='store_true', default=True, help='是否focal_loss')
     parser.add_argument('--is_debug', action='store_true', default=False, help='是否调试模式')
     opt = parser.parse_args()
