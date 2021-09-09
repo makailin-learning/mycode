@@ -87,11 +87,11 @@ def train(opt):
     # 学习率计划
     def burnin_schedule(i):
         if i<burn_in:
-            factor=learning_rate*pow(i/burn_in,4)
+            factor=learning_rate*pow(i/burn_in,4)  # burn_in即为warmup_step,升到最大学习率，然后逐渐衰减
         else:
             et=i//size
             es=(i%size)/size
-            et+=es
+            et+=es   # 当前步数除以数据长度，即为当前训练处于哪个世代，因step=epoch*size+i i<size
             factor=learning_rate_min+0.5*(learning_rate-learning_rate_min)*(1+cos((et/epochs)*pi))
 
         return factor
@@ -124,6 +124,7 @@ def train(opt):
     # 评估参数
     metrics=["grid_size","loss","lbox","lobj","lcls","iou","conf"]
     log_str=''
+    img_s=[]
 
     # 按世代训练 400
     for epoch in range(epochs):
@@ -133,10 +134,22 @@ def train(opt):
         pbar='Epoch'+str(epoch+1)+'/'+str(epochs)+'['
         pbar_end=''
         mean_loss=[]
+        img_s[-1]=image_size
 
         # 最后15个epoch，关闭mixup和马赛克数据增强
         if epoch+1 == opt.mosaic_epoch and opt.mosaic_epoch < epochs:
             train_loader.dataset.mosaic_close()
+
+        # 每隔一定的epoch间隔进行一次多尺度训练
+        if opt.is_multi_scale and (epoch+1 % opt.multi_epoch)==0:
+            gs = 32
+            sz = random.randrange(image_size * 0.5, image_size * 1.5 + gs, gs)
+            sf = sz / img_s[-1]
+            if sf != 1:
+                img_s[-1]=sz
+
+        # 修改数据集中的初始化图像尺寸
+        train_loader.dataset.img_size = img_s[-1]
 
         # 按批次循环 每次取出1组mini_batch的数据,作为一个batch_i
         # 当取得batch_update组mini_batch数据时,进行梯度传播,参数更新
@@ -145,18 +158,6 @@ def train(opt):
             step=len(train_loader)*epoch+batch_i
             imgs=imgs.to(device)
             targets=targets.to(device)
-
-            # 多尺度训练
-            if opt.is_multi_scale:
-                # 图像尺寸基数，需是32的倍数
-                gs=32
-                # 随机计算image_size 0.5-1.5倍之间的随机数，以32为间隔
-                sz=random.randrange(image_size*0.5,image_size*1.5+gs,gs)
-                # 与原图尺寸比例
-                sf=sz/max(imgs.shape[2:])
-                if sf!=1:
-                    # 将原图上采样到指定尺寸
-                    imgs=F.interpolate(imgs,size=[sz,sz],mode='bilinear',align_corners=False)
 
             # 多精度训练
             if opt.is_amp:
@@ -378,6 +379,7 @@ if __name__ == '__main__':
     parser.add_argument('--is_ebr', action='store_true', default=False, help='是否ebr训练模型')
     parser.add_argument('--is_pa', action='store_true', default=False, help='是否正样本扩充')
     parser.add_argument('--mosaic_epoch', type=int, default=375, help='关闭数据增强的epoch数')
+    parser.add_argument('--multi_epoch', type=int, default=2, help='多尺度训练频率')
     parser.add_argument('--is_fl', action='store_true', default=True, help='是否focal_loss')
     parser.add_argument('--is_debug', action='store_true', default=False, help='是否调试模式')
     opt = parser.parse_args()
