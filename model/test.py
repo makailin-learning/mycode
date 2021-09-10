@@ -81,7 +81,7 @@ def data_test(opt,img_show=True):
             for i in range(size):
                 point1 = (int(label[i][2]-label[i][4]/2), int(label[i][3]-label[i][5]/2))
                 point2 = (int(label[i][2]+label[i][4]/2), int(label[i][3]+label[i][5]/2))
-                imgi = cv2.rectangle(imgi, point2, point1, (0, 255, 255), 1)
+                imgi = cv2.rectangle(imgi, point1, point2, (0, 255, 255), 1)
                 cls_name = classes[int(label[i][1])]
 
                 # 图片，添加的文字，左上角坐标，字体，字体大小，颜色，字体粗细
