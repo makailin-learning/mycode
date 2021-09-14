@@ -124,7 +124,7 @@ def train(opt):
     # 评估参数
     metrics=["grid_size","loss","lbox","lobj","lcls","iou","conf"]
     log_str=''
-    img_s=[]
+    img_s=None
 
     # 按世代训练 400
     for epoch in range(epochs):
@@ -134,22 +134,30 @@ def train(opt):
         pbar='Epoch'+str(epoch+1)+'/'+str(epochs)+'['
         pbar_end=''
         mean_loss=[]
-        img_s[-1]=image_size
+        #img_s=image_size
 
         # 最后15个epoch，关闭mixup和马赛克数据增强
-        if epoch+1 == opt.mosaic_epoch and opt.mosaic_epoch < epochs:
+        if epoch+1 == opt.mosaic_epoch:
             train_loader.dataset.mosaic_close()
 
         # 每隔一定的epoch间隔进行一次多尺度训练
-        if opt.is_multi_scale and (epoch+1 % opt.multi_epoch)==0:
-            gs = 32
-            sz = random.randrange(image_size * 0.5, image_size * 1.5 + gs, gs)
-            sf = sz / img_s[-1]
-            if sf != 1:
-                img_s[-1]=sz
+        # if (epoch+1) % opt.multi_epoch==0:
+        #     gs = 32
+        #     sz = random.randrange(image_size * 0.5, image_size * 1.5 + gs, gs)
+        #     sf = sz / img_s
+        #     if sf != 1:
+        #         img_s=sz
+        #
+        # # 修改数据集中的初始化图像尺寸
+        # train_loader.dataset.img_size = img_s
 
-        # 修改数据集中的初始化图像尺寸
-        train_loader.dataset.img_size = img_s[-1]
+        sf=1
+        sz=image_size
+        if (epoch+1) % opt.multi_epoch==0:
+            gs = 32
+            # 随机计算image_size 0.5-1.5倍之间的随机数，以32为间隔
+            sz = random.randrange(image_size * 0.5, image_size * 1.5 + gs, gs)
+            sf = sz / image_size  # scale factor
 
         # 按批次循环 每次取出1组mini_batch的数据,作为一个batch_i
         # 当取得batch_update组mini_batch数据时,进行梯度传播,参数更新
@@ -158,6 +166,9 @@ def train(opt):
             step=len(train_loader)*epoch+batch_i
             imgs=imgs.to(device)
             targets=targets.to(device)
+
+            if sf != 1:
+                imgs = nn.functional.interpolate(imgs, size=[sz, sz], mode='bilinear', align_corners=False)
 
             # 多精度训练
             if opt.is_amp:

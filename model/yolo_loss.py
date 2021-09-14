@@ -138,14 +138,6 @@ class YoloLoss(nn.Module):
         # 由2维矩阵变为3维张量，厚度为na=3，即anchor个数，高度为nt=12，即bs张图片中的gt框个数，宽度为7  label_shape:[3,n,7]
         y=torch.cat((y.repeat(na,1,1),ai[:,:,None]),2)
 
-        #偏置项(网格中心点)
-        g=0.5
-        #扩展正样本偏置项，正样本中心网格的3x3网格区域
-        off=torch.tensor(
-            [[0, 0],[ 1, 0],[0,1],
-             [-1,0],[ 0,-1],[1,1],
-             [-1,1],[-1,-1],[1,1]],device=device).float()*g
-
         for i,x_i in enumerate(x):
             x_type=x_i.dtype
             cfg=c[i]
@@ -153,7 +145,7 @@ class YoloLoss(nn.Module):
             grid_size=int(cfg['grid_size'])
 
             # 找出合适的gt类别号，gtbox, 选取预测box的索引，锚框
-            tcls,tbox,indices,anchors=self.build_targets(y,grid_size,cfg,device,gain,nt,g,off,x_type)
+            tcls,tbox,indices,anchors=self.build_targets(y,grid_size,cfg,device,gain,nt,x_type)
 
             # tbox是gt的tx,ty,tw,th,网格内部的偏移量
             # 候选框索引: 图片索引，anchor索引，y网格索引，x网格索引,均为m维向量[m]
@@ -258,7 +250,7 @@ class YoloLoss(nn.Module):
             iou_res = I.ciou(p_b, t_b)
         return iou_res
 
-    def build_targets(self,y,grid_size,cfg,device,gain,nt,g,off,x_type):
+    def build_targets(self,y,grid_size,cfg,device,gain,nt,x_type):
         mask = cfg['mask'].split(',')
         mask = [int(a) for a in mask]
         anchors = cfg['anchors'].split(',')
@@ -284,6 +276,15 @@ class YoloLoss(nn.Module):
             # 例如图中全是大物体，且都只有一个物体，即nt=4，在52x52的检测头下，就会匹配失败，那么将会在26和13下匹配成功
             t=t[j]
             if self.is_pa:
+
+                # 偏置项(网格中心点)
+                g = 0.5
+                # 扩展正样本偏置项，正样本中心网格的3x3网格区域
+                off = torch.tensor(
+                    [[0, 0], [1, 0], [0, 1],
+                     [-1, 0], [0, -1], [1, 1],
+                     [-1, 1], [-1, -1], [1, 1]], device=device).float() * g
+
                 gxy=t[:,2:4]    #取得gt框的xy坐标 [n,2]
                 gxi=gain[[2,3]]-gxy  #网格数-xy坐标，获取框在检测图上的方位偏移 [n,2]
                 #gt框x,y坐标距离左边的距离小于中心点，且不是在第一个网格中那些xy坐标

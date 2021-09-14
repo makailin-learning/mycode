@@ -14,13 +14,11 @@ class YOLOLayer(nn.Module):
 
     def forward(self, x, img_size):  # yolo上一层输出x进行输入，第1个为32x75x52x52，第2个为32x75x26x26，第3个为32x75x13x13
 
+        device=x.device
         # 消除网格敏感系数,大幅度缩小同样要求达到y=[0,1]区间时的x区间大小
         # 当gt框落在网格边缘时,预测值能更好地预测,否则就必须是很大的数才能达到要求
         # scale_x_y = float(self.cfg['scale_x_y'])
         scale_x_y = float(self.cfg['scale_x_y'])*2   # 网络敏感度变为4*sigmoid-1.5
-
-        # 定义御用张量
-        float_tensor = torch.cuda.FloatTensor if x.is_cuda else torch.FloatTensor
 
         batch_size = x.size(0)
         grid_size = x.size(2)
@@ -33,7 +31,7 @@ class YOLOLayer(nn.Module):
         [ 6.0000,  7.5938],
         [14.3438, 12.5312]]
         """
-        self.scale_anchors = float_tensor([(a[0] / self.stride, a[1] / self.stride) for a in self.anchors])
+        self.scale_anchors = torch.Tensor([(a[0] / self.stride, a[1] / self.stride) for a in self.anchors]).to(device)
 
         # 调整数据通道格式64x75x52x52  -> 64x3x25x52x52  -> 64x3x52x52x25
         pred = x.view(batch_size, self.num_anchor, self.num_cls + 5, grid_size, grid_size)
@@ -51,8 +49,8 @@ class YOLOLayer(nn.Module):
             pred_cls = pred[..., 5:]
 
             # torch.repeat进行张量复制，第一个参数表示的是行复制的次数，第二个参数表示列复制的次数,变为52x52的坐标张量
-            grid_x = torch.arange(grid_size).repeat(grid_size, 1).view([1, 1, grid_size, grid_size]).type(float_tensor)
-            grid_y = torch.arange(grid_size).repeat(grid_size, 1).t().view([1, 1, grid_size, grid_size]).type(float_tensor)
+            grid_x = torch.arange(grid_size,device=device).repeat(grid_size, 1).view([1, 1, grid_size, grid_size])
+            grid_y = torch.arange(grid_size,device=device).repeat(grid_size, 1).t().view([1, 1, grid_size, grid_size])
             """
             grid = np.arange(grid_size)
             c = np.meshgrid(grid, grid)  # 生成gridxgrid的网格坐标
@@ -66,7 +64,7 @@ class YOLOLayer(nn.Module):
             ph = self.scale_anchors[:, 1:2].view(1, self.num_anchor, 1, 1)
 
             # 创造一个用于后续计算loss的容器 64,3,52,52,4
-            pred_loss = float_tensor(pred[..., :4].shape)
+            pred_loss = torch.Tensor(pred[..., :4].shape).to(device)
 
             # bx=cx+offset   bw=pw*e^tw
             pred_loss[..., 0] = pred_x + grid_x  #广播机制相加
